@@ -6,6 +6,16 @@ import pygame
 import math
 import os
 
+@dataclass
+class SpineRenderSettings:
+    """Spine渲染设置"""
+    use_premultiplied_alpha: bool = True  # 是否使用预乘Alpha
+    scale: float = 1.0                    # 渲染缩放
+    position_x: float = 0.0               # X位置偏移
+    position_y: float = 0.0               # Y位置偏移
+    flip_x: bool = False                  # X轴翻转
+    flip_y: bool = False  
+
 # 枚举定义
 class BlendMode(IntEnum):
     Normal = 0 
@@ -105,10 +115,7 @@ class RegionAttachment(Attachment):
     offset: List[float] = field(default_factory=lambda: [0] * 8)
     uvs: List[float] = field(default_factory=lambda: [0] * 8)
 
-    def compute_world_vertices(self, bone, vertices: List[float], offset: int):
-        """计算世界坐标系顶点"""
-        # 实现顶点变换...
-        pass
+
 
 @dataclass
 class Skin:
@@ -230,7 +237,8 @@ class Atlas:
 
     def find_region(self, name: str) -> Optional[TextureRegion]:
         return self.regions.get(name)
-    
+
+
 class SkeletonJson:
     """骨骼JSON加载器"""
     def __init__(self, atlas: Atlas):  # 接受Atlas实例
@@ -370,12 +378,14 @@ class SkeletonJson:
             
         return None
 
+
 class Bone:
     """骨骼实例"""
     def __init__(self, data: BoneData, parent: Optional['Bone']):
         self.data = data
         self.parent = parent
         
+        # 本地变换
         self.x = data.x
         self.y = data.y
         self.rotation = data.rotation
@@ -384,74 +394,57 @@ class Bone:
         self.shearX = data.shearX 
         self.shearY = data.shearY
         
-        self.ax = 0  # Applied x
-        self.ay = 0  # Applied y
-        self.arotation = 0
-        self.ascaleX = 0
-        self.ascaleY = 0
-        self.ashearX = 0
-        self.ashearY = 0
+        # 是否激活
+        self.active = True
         
-        self.a = 1  # World transform
-        self.b = 0
-        self.c = 0
-        self.d = 1
+        # 世界变换矩阵
+        self.a = 1  # scale * cos
+        self.b = 0  # scale * sin
+        self.c = 0  # -sin * scale
+        self.d = 1  # cos * scale
         self.world_x = 0
         self.world_y = 0
         
-        self.update_applied_transform()
+        self.update_world_transform()
         
     def update_world_transform(self):
-        """更新世界变换"""
-        parent = self.parent
+        """更新世界变换 - 基于Spine v38的实现"""
+        rotation = math.radians(self.rotation)
+        cos = math.cos(rotation)
+        sin = math.sin(rotation)
         
-        # 旋转矩阵计算
-        rotation = self.arotation
-        cos = math.cos(math.radians(rotation))
-        sin = math.sin(math.radians(rotation))
+        # 本地变换矩阵
+        self.a = cos * self.scaleX
+        self.b = sin * self.scaleX
+        self.c = -sin * self.scaleY
+        self.d = cos * self.scaleY
         
-        # 缩放和错切
-        scale_x = self.ascaleX
-        scale_y = self.ascaleY
-        shear_x = math.radians(self.ashearX)
-        shear_y = math.radians(self.ashearY)
-        
-        self.a = (cos + math.sin(shear_x) * shear_y) * scale_x
-        self.b = (sin + math.cos(shear_x) * shear_y) * scale_x
-        self.c = (-sin + math.sin(shear_y)) * scale_y
-        self.d = (cos + math.cos(shear_y)) * scale_y
-        
-        if parent:
+        if self.parent:
             # 组合父骨骼变换
-            self.world_x = self.ax * parent.a + self.ay * parent.b + parent.world_x
-            self.world_y = self.ax * parent.c + self.ay * parent.d + parent.world_y
+            pa = self.parent.a
+            pb = self.parent.b
+            pc = self.parent.c
+            pd = self.parent.d
             
-            if self.data.transform_mode <= TransformMode.NoScale:
-                # 正常变换
-                pa = parent.a
-                pb = parent.b
-                pc = parent.c
-                pd = parent.d
-                self.a = self.a * pa + self.b * pc
-                self.b = self.a * pb + self.b * pd
-                self.c = self.c * pa + self.d * pc
-                self.d = self.c * pb + self.d * pd
-            else:
-                # 特殊变换模式...
-                pass
+            # 计算世界坐标
+            self.world_x = self.x * pa + self.y * pb + self.parent.world_x
+            self.world_y = self.x * pc + self.y * pd + self.parent.world_y
+            
+            # 合并变换矩阵
+            temp_a = self.a
+            temp_b = self.b
+            temp_c = self.c
+            temp_d = self.d
+            
+            self.a = temp_a * pa + temp_b * pc
+            self.b = temp_a * pb + temp_b * pd
+            self.c = temp_c * pa + temp_d * pc
+            self.d = temp_c * pb + temp_d * pd
         else:
-            self.world_x = self.ax
-            self.world_y = self.ay
-            
-    def update_applied_transform(self):
-        """更新应用的变换"""
-        self.ax = self.x
-        self.ay = self.y
-        self.arotation = self.rotation
-        self.ascaleX = self.scaleX
-        self.ascaleY = self.scaleY
-        self.ashearX = self.shearX
-        self.ashearY = self.shearY
+            # 没有父骨骼，直接使用本地坐标
+            self.world_x = self.x
+            self.world_y = self.y
+
 
 class Slot:
     """插槽实例"""
@@ -467,37 +460,39 @@ class Slot:
         self.attachment = attachment
         self.attachment_time = 0
 
+
+
 class Skeleton:
-    """骨骼动画实例"""
     def __init__(self, data: SkeletonData):
-        # 修改骨骼实例化顺序为层级顺序
+        self.data = data
         self.bones = []
-        bone_data_list = sorted(data.bones, key=lambda b: len(b.parent.name) if b.parent else 0)
-        for bone_data in bone_data_list:
-            parent = next((b for b in self.bones if b.data.name == bone_data.parent.name), None)
+        self.slots = []
+        self.skin = None
+        self.render_settings = SpineRenderSettings()
+        
+        # 初始化骨骼 - 确保父骨骼在前
+        bone_map = {}
+        for bone_data in data.bones:
+            parent = None
+            if bone_data.parent:
+                parent = bone_map.get(bone_data.parent.name)
             bone = Bone(bone_data, parent)
+            bone_map[bone_data.name] = bone
             self.bones.append(bone)
-            
-        # 创建插槽实例
-        self.slots: List[Slot] = []
+        
+        # 初始化插槽 - 按照原始顺序
         for slot_data in data.slots:
-            bone = next(
-                b for b in self.bones 
-                if b.data.name == slot_data.bone_data.name
-            )
-            slot = Slot(slot_data, bone)
-            self.slots.append(slot)
-            
-        # 设置初始附件
-        self.skin: Optional[Skin] = None
+            bone = bone_map.get(slot_data.bone_data.name)
+            if bone:
+                slot = Slot(slot_data, bone)
+                self.slots.append(slot)
+                
+        # 设置默认皮肤
         if data.default_skin:
             self.set_skin(data.default_skin)
             
     def set_skin(self, skin: Skin):
-        """设置皮肤"""
         self.skin = skin
-        
-        # 应用初始附件
         if skin:
             for i, slot in enumerate(self.slots):
                 name = slot.data.attachment_name
@@ -505,71 +500,152 @@ class Skeleton:
                     attachment = skin.attachments.get((i, name))
                     if attachment:
                         slot.set_attachment(attachment)
-                        
+
     def update_world_transform(self):
-        """更新世界变换"""
+        """更新所有骨骼的世界变换"""
         for bone in self.bones:
-            bone.update_world_transform()
+            if bone.active:
+                bone.update_world_transform()
+
+    def compute_world_vertices_region(self, attachment: RegionAttachment, slot: Slot, vertices: list):
+        """计算 RegionAttachment 的世界顶点坐标"""
+        bone = slot.bone
+        x = bone.world_x
+        y = bone.world_y
+        a = bone.a
+        b = bone.b
+        c = bone.c
+        d = bone.d
+        
+        # RegionAttachment 有固定的四个顶点
+        # 左上、右上、右下、左下
+        local_vertices = [
+            -attachment.width/2, -attachment.height/2,  # 左上
+            attachment.width/2, -attachment.height/2,   # 右上
+            attachment.width/2, attachment.height/2,    # 右下
+            -attachment.width/2, attachment.height/2,   # 左下
+        ]
+        
+        for i in range(4):
+            vx = local_vertices[i * 2]
+            vy = local_vertices[i * 2 + 1]
+            vertices.extend([
+                vx * a + vy * b + x,
+                vx * c + vy * d + y
+            ])
 
     def draw(self, surface: pygame.Surface):
-            """渲染骨骼"""
-            self.update_world_transform()
+        """渲染骨骼 - 基于v38实现"""
+        self.update_world_transform()
+        
+        # 获取屏幕中心点
+        center_x = surface.get_width() // 2
+        center_y = surface.get_height() // 2
+        
+        # 渲染设置
+        scale = self.render_settings.scale
+        offset_x = self.render_settings.position_x
+        offset_y = self.render_settings.position_y
+        
+        # 从后往前渲染插槽
+        for slot in reversed(self.slots):
+            if not slot.bone.active:
+                continue
+                
+            if not slot.attachment or not isinstance(slot.attachment, RegionAttachment):
+                continue
+                
+            bone = slot.bone
+            attachment = slot.attachment
+            region = attachment.region
+            if not region or not region.texture:
+                continue
             
-            for slot in self.slots:
-                if not slot.attachment:
+            # 1. 获取原始纹理
+            texture = region.texture.copy()
+            
+            # 2. 计算顶点坐标
+            vertices = []
+            self.compute_world_vertices_region(attachment, slot, vertices)
+            
+            # 3. 计算变换后的位置（使用第一个顶点作为基准点）
+            world_x = vertices[0]
+            world_y = vertices[1]
+            
+            px = center_x + (world_x + offset_x) * scale
+            py = center_y + (world_y + offset_y) * scale
+            
+            # 4. 计算最终缩放
+            bone_scale_x = math.sqrt(bone.a * bone.a + bone.c * bone.c)
+            bone_scale_y = math.sqrt(bone.b * bone.b + bone.d * bone.d)
+            
+            scale_x = bone_scale_x * attachment.scaleX * scale
+            scale_y = bone_scale_y * attachment.scaleY * scale
+            
+            if self.render_settings.flip_x:
+                scale_x *= -1
+            if self.render_settings.flip_y:
+                scale_y *= -1
+            
+            # 5. 计算最终旋转
+            rotation = math.degrees(math.atan2(bone.c, bone.a))
+            rotation += attachment.rotation
+            
+            # 6. 应用缩放
+            if scale_x != 1 or scale_y != 1:
+                new_w = max(1, int(texture.get_width() * abs(scale_x)))
+                new_h = max(1, int(texture.get_height() * abs(scale_y)))
+                try:
+                    texture = pygame.transform.smoothscale(texture, (new_w, new_h))
+                except ValueError:
                     continue
                     
-                if isinstance(slot.attachment, RegionAttachment):
-                    region = slot.attachment.region
-                    if not region or not region.texture:
-                        continue
-                    
-                # 关键修改1：使用附件自身的偏移量
-                bone = slot.bone
-                attachment = slot.attachment
-                x = attachment.x
-                y = attachment.y
+            # 7. 应用旋转
+            if rotation != 0:
+                texture = pygame.transform.rotate(texture, -rotation)
                 
-                # 计算世界坐标
-                px = x * bone.a + y * bone.b + bone.world_x
-                py = x * bone.c + y * bone.d + bone.world_y
-                
-                # 关键修改2：正确的旋转和缩放计算
-                rotation = -math.degrees(math.atan2(bone.c, bone.a))
-                scale_x = math.hypot(bone.a, bone.c)
-                scale_y = math.hypot(bone.b, bone.d)
-                
-                # 获取原始纹理并转换
-                texture = region.texture.copy()
-                
-                # 缩放处理
-                if scale_x != 1 or scale_y != 1:
-                    new_w = max(1, int(texture.get_width() * scale_x))
-                    new_h = max(1, int(texture.get_height() * scale_y))
-                    texture = pygame.transform.smoothscale(texture, (new_w, new_h))
-                
-                # 修复点：修正旋转后的子表面裁剪
-                if rotation != 0:
-                    rot_texture = pygame.transform.rotate(texture, rotation)
-                    texture = rot_texture.copy() 
-
-                
-                # 颜色混合和透明度处理
-                if slot.color != Color():
-                    color_surf = pygame.Surface(texture.get_size(), pygame.SRCALPHA)
-                    rgba = slot.color.to_pygame_color()
-                    color_surf.fill(rgba)
-                    texture.blit(color_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-                
-                if slot.color.a != 1:
+            # 8. 应用颜色混合
+            if self.render_settings.use_premultiplied_alpha:
+                if slot.color.a != 1.0:
                     texture.set_alpha(int(slot.color.a * 255))
                 
-                # 绘制位置修正
-                draw_x = px - texture.get_width() / 2
-                draw_y = py - texture.get_height() / 2
-                surface.blit(texture, (draw_x, draw_y))   
+                if slot.color != Color():
+                    color_surf = pygame.Surface(texture.get_size(), pygame.SRCALPHA)
+                    color = slot.color.to_pygame_color()
+                    color_surf.fill(color)
+                    texture.blit(color_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                    
+            # 9. 绘制
+            draw_x = px - texture.get_width() / 2
+            draw_y = py - texture.get_height() / 2
+            surface.blit(texture, (draw_x, draw_y))
 
-           
+
+    
+    def draw_debug(self, surface: pygame.Surface):
+        """绘制调试信息"""
+        center_x = surface.get_width() // 2
+        center_y = surface.get_height() // 2
+        scale = self.render_settings.scale
+        
+        for bone in self.bones:
+            # 计算世界坐标
+            wx = center_x + (bone.world_x + self.render_settings.position_x) * scale
+            wy = center_y + (bone.world_y + self.render_settings.position_y) * scale
+            
+            # 绘制骨骼点
+            pygame.draw.circle(surface, (255, 0, 0), (int(wx), int(wy)), 3)
+            
+            # 绘制骨骼连接线
+            if bone.parent:
+                parent_wx = center_x + (bone.parent.world_x + self.render_settings.position_x) * scale
+                parent_wy = center_y + (bone.parent.world_y + self.render_settings.position_y) * scale
+                pygame.draw.line(surface, (0, 255, 0),
+                               (int(parent_wx), int(parent_wy)),
+                               (int(wx), int(wy)), 1)
+
+                
+                
 # 初始化pygame
 pygame.init()
 screen = pygame.display.set_mode((800, 600))
@@ -583,22 +659,42 @@ skeleton = Skeleton(skeleton_data)
 
 
 # 游戏主循环
+# 游戏主循环
 running = True
 while running:
-    # 处理事件
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-            
+        elif event.type == pygame.KEYDOWN:
+            # 位置控制
+            if event.key == pygame.K_LEFT:
+                skeleton.render_settings.position_x -= 10
+            elif event.key == pygame.K_RIGHT:
+                skeleton.render_settings.position_x += 10
+            elif event.key == pygame.K_UP:
+                skeleton.render_settings.position_y -= 10
+            elif event.key == pygame.K_DOWN:
+                skeleton.render_settings.position_y += 10
+            # 缩放控制    
+            elif event.key == pygame.K_q:
+                skeleton.render_settings.scale += 0.1
+            elif event.key == pygame.K_a:
+                skeleton.render_settings.scale = max(0.1, skeleton.render_settings.scale - 0.1)
+            # 翻转控制
+            elif event.key == pygame.K_x:
+                skeleton.render_settings.flip_x = not skeleton.render_settings.flip_x
+            elif event.key == pygame.K_y:
+                skeleton.render_settings.flip_y = not skeleton.render_settings.flip_y
+            # 重置
+            elif event.key == pygame.K_r:
+                skeleton.render_settings = SpineRenderSettings()
+                
     # 清屏
     screen.fill((255, 255, 255))
     
-    # 更新和渲染骨骼
-    skeleton.update_world_transform()
+    # 绘制
     skeleton.draw(screen)
+    skeleton.draw_debug(screen)
     
-    # 刷新屏幕
     pygame.display.flip()
     clock.tick(60)
-    
-pygame.quit()
