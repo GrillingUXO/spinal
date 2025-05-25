@@ -1,3 +1,4 @@
+
 from typing import List, Dict, Optional
 from enum import IntEnum 
 import json
@@ -105,7 +106,7 @@ class Attachment:
 class RegionAttachment(Attachment):
 
     def compute_world_vertices(self, bone: 'Bone', vertices: list, screen_height: int):
-        """计算顶点的世界坐标（适配Pygame坐标系）"""
+        """计算四个顶点在 Pygame 坐标系下的位置，支持 rotate"""
         x = bone.world_x
         y = bone.world_y
         a = bone.a
@@ -113,25 +114,41 @@ class RegionAttachment(Attachment):
         c = bone.c
         d = bone.d
 
-        # Spine的本地顶点（原点在左下角，Y轴向上）
+        # 区分 rotate:true 的纹理尺寸
+        w = self.width
+        h = self.height
+        if self.region and self.region.rotate:
+            w, h = h, w  # 宽高互换
+
+        # 图像中心原点本地坐标
         local_vertices = [
-            -self.width/2, -self.height/2,  # 左上（相对于Spine坐标系）
-            self.width/2, -self.height/2,    # 右上
-            self.width/2, self.height/2,     # 右下
-            -self.width/2, self.height/2,    # 左下
+            self.x - w / 2, self.y - h / 2,
+            self.x + w / 2, self.y - h / 2,
+            self.x + w / 2, self.y + h / 2,
+            self.x - w / 2, self.y + h / 2,
         ]
 
+        # 绕 attachment.rotation 旋转（注意是逆时针）
+        rad = math.radians(self.rotation)
+        cos_r = math.cos(rad)
+        sin_r = math.sin(rad)
+
         for i in range(4):
-            vx = local_vertices[i * 2]
-            vy = local_vertices[i * 2 + 1]
-            # 计算世界坐标（Spine坐标系）
-            world_x = vx * a + vy * b + x
-            world_y_spine = vx * c + vy * d + y  # Spine的Y轴向上
-            
-            # 转换为Pygame坐标系（Y轴向下，原点在左上角）
-            world_y_pygame = screen_height - world_y_spine  # 关键修改：Y轴取反并平移
-            
-            vertices.extend([world_x, world_y_pygame])
+            lx = local_vertices[i * 2]
+            ly = local_vertices[i * 2 + 1]
+
+            # 本地旋转
+            rx = lx * cos_r - ly * sin_r
+            ry = lx * sin_r + ly * cos_r
+
+            # 应用骨骼变换
+            wx = rx * a + ry * b + x
+            wy = rx * c + ry * d + y
+
+            # 转 Pygame Y 轴方向
+            vertices.append(wx)
+            vertices.append(wy)
+
             
     def __init__(self, name: str, **kwargs):
         """初始化区域附件"""
@@ -640,8 +657,10 @@ class Skeleton:
             world_y = vertices[1]
             
             # 应用全局变换
+            avg_x = sum(vertices[i*2] for i in range(4)) / 4
+            avg_y = sum(vertices[i*2+1] for i in range(4)) / 4
             px = center_x + (world_x + offset_x) * scale
-            py = center_y + (world_y + offset_y) * scale
+            py = screen_height - ((world_y + offset_y) * scale)
             
             # 计算缩放
             bone = slot.bone
@@ -651,16 +670,12 @@ class Skeleton:
             raw_scale_y = bone_scale_y * attachment.scaleY * scale
 
             # 处理翻转
-            if self.render_settings.flip_x:
-                raw_scale_x *= -1
-            if self.render_settings.flip_y:
-                raw_scale_y *= -1
-
-            # 提取翻转标志并取绝对缩放值
-            flip_x = raw_scale_x < 0
-            flip_y = raw_scale_y < 0
             scale_x = abs(raw_scale_x)
             scale_y = abs(raw_scale_y)
+
+            # 仅根据全局设置是否翻转
+            flip_x = self.render_settings.flip_x
+            flip_y = self.render_settings.flip_y
 
             # 缩放纹理
             if scale_x != 1 or scale_y != 1:
@@ -694,9 +709,12 @@ class Skeleton:
                     texture.blit(color_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
 
             # 最终绘制（底部中心锚点）
-            draw_x = px - texture.get_width() / 2
-            draw_y = py - texture.get_height()
+            min_x = min(vertices[i*2] for i in range(4))
+            min_y = min(vertices[i*2+1] for i in range(4))
+            draw_x = center_x + (min_x + offset_x) * scale
+            draw_y = center_y + (min_y + offset_y) * scale
             surface.blit(texture, (draw_x, draw_y))
+
 
                     
 
