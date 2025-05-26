@@ -29,11 +29,11 @@ class Atlas:
         atlas_dir = os.path.dirname(atlas_path)
         
         with open(atlas_path, 'r') as f:
-            lines = [line.rstrip('\n') for line in f.readlines()]  # 移除换行符
+            lines = [line.rstrip('\n') for line in f.readlines()] 
         
         i = 0
         current_page = None
-        texture = None  # 显式声明texture变量
+        texture = None 
         
         while i < len(lines):
             line = lines[i].strip()
@@ -52,13 +52,13 @@ class Atlas:
                     return
                 current_page = texture
                 
-                # 跳过纹理页属性（不使用的字段）
+                # 跳过纹理页属性
                 i += 1
                 while i < len(lines):
                     line = lines[i].strip()
                     if not line:
                         break
-                    if ':' not in line:  # 新区域开始
+                    if ':' not in line:  
                         break
                     i += 1
                 continue
@@ -70,7 +70,7 @@ class Atlas:
             
             while i < len(lines):
                 line = lines[i].strip()
-                if not line:  # 空行表示区域结束
+                if not line: 
                     i += 1
                     break
                 if ':' not in line:  # 新区域开始
@@ -87,14 +87,14 @@ class Atlas:
                 elif key == 'size':
                     region.width, region.height = map(int, value.split(','))
                 elif key == 'orig':
-                    pass  # 原始尺寸不需要处理
+                    pass  # 原始尺寸不处理
                 elif key == 'offset':
                     values = list(map(float, value.split(',')))
                     region.offset = values
                 elif key == 'index':
-                    pass  # 索引不需要处理
+                    pass  # 索引不处理
                 
-                i += 1  # 确保每次处理都递增
+                i += 1
             
             # 计算UV坐标
             if texture:
