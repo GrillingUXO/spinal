@@ -1,8 +1,23 @@
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
 from mytypes import AttachmentType, BlendMode, Color, TransformMode
-from dataclasses import dataclass, field
 import math
+
+
+
+@dataclass
+class AnimationSlotTimeline:
+    slot_name: str
+    timelines: List[Dict]  
+
+@dataclass
+class Animation:
+    name: str
+    duration: float
+    slot_timelines: List[AnimationSlotTimeline] = field(default_factory=list)
+
+
+
 
 @dataclass
 class BoneData:
@@ -20,6 +35,7 @@ class BoneData:
     transform_mode: TransformMode = TransformMode.Normal
     skin_required: bool = False
 
+# --- SlotData ---
 @dataclass
 class SlotData:
     """插槽数据"""
@@ -29,12 +45,14 @@ class SlotData:
     color: Color = field(default_factory=Color)
     blend_mode: BlendMode = BlendMode.Normal
 
+# --- Attachment base ---
 @dataclass
 class Attachment:
     """附件基类"""
     name: str
     type: AttachmentType
 
+# --- RegionAttachment ---
 @dataclass
 class RegionAttachment(Attachment):
 
@@ -82,7 +100,6 @@ class RegionAttachment(Attachment):
             vertices.append(wx)
             vertices.append(wy)
 
-            
     def __init__(self, name: str, **kwargs):
         """初始化区域附件"""
         super().__init__(name=name, type=AttachmentType.Region)
@@ -99,20 +116,30 @@ class RegionAttachment(Attachment):
         self.offset = [0] * 8
         self.uvs = [0] * 8
 
+# --- MeshAttachment ---
+@dataclass
+class MeshAttachment(Attachment):
+    path: str
+    color: Color = field(default_factory=Color)
+    uvs: list = field(default_factory=list)
+    vertices: list = field(default_factory=list)
+    triangles: list = field(default_factory=list)
+    region: Optional['TextureRegion'] = None
 
+# --- Skin ---
 @dataclass
 class Skin:
     """皮肤"""
     name: str
-    attachments: Dict[tuple[int, str], Attachment] = field(default_factory=dict)
+    attachments: Dict[Tuple[int, str], Attachment] = field(default_factory=dict)
 
+# --- SkeletonData ---
 @dataclass
 class SkeletonData:
-    
     """骨骼数据"""
     name: str = ""
     bones: List[BoneData] = field(default_factory=list)
-    slots: List[SlotData] = field(default_factory=list) 
+    slots: List[SlotData] = field(default_factory=list)
     skins: List[Skin] = field(default_factory=list)
     default_skin: Optional[Skin] = None
-    
+    animations: List[Animation] = field(default_factory=list)

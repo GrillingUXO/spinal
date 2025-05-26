@@ -89,7 +89,8 @@ class Atlas:
                 elif key == 'orig':
                     pass  # 原始尺寸不需要处理
                 elif key == 'offset':
-                    pass  # 偏移量不需要处理
+                    values = list(map(float, value.split(',')))
+                    region.offset = values
                 elif key == 'index':
                     pass  # 索引不需要处理
                 
@@ -99,19 +100,21 @@ class Atlas:
             if texture:
                 tex_width = texture.get_width()
                 tex_height = texture.get_height()
-                
+
                 region.u = region.x / tex_width
                 region.v = region.y / tex_height
+
                 if region.rotate:
                     region.u2 = (region.x + region.height) / tex_width
                     region.v2 = (region.y + region.width) / tex_height
+                    sub_rect = (region.x, region.y, region.height, region.width)
                 else:
                     region.u2 = (region.x + region.width) / tex_width
                     region.v2 = (region.y + region.height) / tex_height
-                
-                # 提取子纹理
-                try:
                     sub_rect = (region.x, region.y, region.width, region.height)
+
+                # extract surface and rotate if needed
+                try:
                     sub_surface = texture.subsurface(sub_rect)
                     if region.rotate:
                         sub_surface = pygame.transform.rotate(sub_surface, -90)
@@ -119,6 +122,7 @@ class Atlas:
                 except ValueError:
                     print(f"无效的纹理区域: {region.name}")
                     continue
+
             
             self.regions[region.name] = region
 

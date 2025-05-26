@@ -112,6 +112,7 @@ class Skeleton:
         self.a = 1.0  
 
         self.data = data
+        self.all_bones = []
         self.bones = []
         self.slots = []
         self.skin = None
@@ -140,13 +141,24 @@ class Skeleton:
             
     def set_skin(self, skin: Skin):
         self.skin = skin
-        if skin:
-            for i, slot in enumerate(self.slots):
-                name = slot.data.attachment_name
-                if name:
-                    attachment = skin.attachments.get((i, name))
-                    if attachment:
-                        slot.set_attachment(attachment)
+        if not skin:
+            return
+
+        for i, slot in enumerate(self.slots):
+            slot_data = slot.data
+            attachment_name = slot_data.attachment_name
+
+            if attachment_name is None:
+                continue
+
+            key = (i, attachment_name)
+            attachment = skin.attachments.get(key)
+
+            if attachment:
+                slot.set_attachment(attachment)
+            else:
+                print(f"[WARNING] Missing attachment for slot '{slot_data.name}' (index {i}) with name '{attachment_name}'")
+
 
     def update_world_transform(self):
         """更新所有骨骼的世界变换"""
@@ -154,69 +166,104 @@ class Skeleton:
             if bone.active:
                 bone.update_world_transform()
 
+
+    def reset_bones_from_names(self, bone_names: set[str]):
+        """根据骨骼名激活/停用骨骼，并确保父子关系完整"""
+        # 保留原有骨骼实例，避免重复创建
+        bone_instance_map = {bone.data.name: bone for bone in self.bones}
+        
+        # 标记所有骨骼为非激活
+        for bone in self.bones:
+            bone.active = False
+        
+        # 激活当前动画使用的骨骼及其父骨骼
+        used_bones = set()
+        def activate_bone(name):
+            if name in used_bones or name not in bone_instance_map:
+                return
+            bone = bone_instance_map[name]
+            bone.active = True
+            used_bones.add(name)
+            if bone.data.parent:
+                activate_bone(bone.data.parent.name)
+        
+        for name in bone_names:
+            activate_bone(name)
+        
+        # 按依赖顺序排序骨骼（父在前）
+        self.bones = sorted(
+            [bone for bone in self.bones if bone.active],
+            key=lambda b: b.data.parent.name if b.data.parent else ""
+        )
+
+
     def draw(self, surface: pygame.Surface):
         self.update_world_transform()
-        
+
         screen_width = surface.get_width()
         screen_height = surface.get_height()
         center_x = screen_width // 2
         center_y = screen_height // 2
-        
-        # 渲染设置
+
         scale = self.render_settings.scale
         offset_x = self.render_settings.position_x
         offset_y = self.render_settings.position_y
-        
-        for slot in self.slots:
-            if not slot.bone.active:
+
+        if not self.skin:
+            return
+
+        used_attachments = set()  # 防止重复贴图
+
+        for bone in self.bones:
+            bone_name = bone.data.name
+
+            matched_attachment = None
+            for (slot_index, attachment_name), attachment in self.skin.attachments.items():
+                if attachment.type != AttachmentType.Region:
+                    continue
+                # 精确匹配
+                if attachment.name.startswith(bone_name) or attachment.path.startswith(bone_name):
+
+                    if attachment.name in used_attachments:
+                        continue
+                    matched_attachment = attachment
+                    used_attachments.add(attachment.name)
+                    break
+
+            if not matched_attachment:
                 continue
-                
-            attachment = slot.attachment
-            if not attachment or attachment.type != AttachmentType.Region:
-                continue
-                
+
+            attachment = matched_attachment
             region = attachment.region
             if not region or not region.texture:
                 continue
-                
+
             texture = region.texture.copy()
-            
-            # 计算颜色混合
-            tint_r = self.r * slot.r * attachment.color.r
-            tint_g = self.g * slot.g * attachment.color.g
-            tint_b = self.b * slot.b * attachment.color.b
-            tint_a = self.a * slot.a * attachment.color.a
-            
-            # 计算顶点数据（适配Pygame坐标系）
-            vertices = []
-            attachment.compute_world_vertices(slot.bone, vertices, screen_height)
-            
-            # 使用第一个顶点的位置作为基准
-            world_x = vertices[0]
-            world_y = vertices[1]
-            
-            # 应用全局变换
-            avg_x = sum(vertices[i*2] for i in range(4)) / 4
-            avg_y = sum(vertices[i*2+1] for i in range(4)) / 4
+
+            # 贴图位置：骨骼位置 + 附件偏移
+            local_x = attachment.x
+            local_y = attachment.y
+            world_x = bone.world_x + local_x * bone.a + local_y * bone.b
+            world_y = bone.world_y + local_x * bone.c + local_y * bone.d
+
             px = center_x + (world_x + offset_x) * scale
-            py = screen_height - ((world_y + offset_y) * scale)
-            
-            # 计算缩放
-            bone = slot.bone
+            py = center_y + (world_y + offset_y) * scale
+
+            # 输出调试信息
+            if attachment.name not in used_attachments:
+                print(f"[Bone] name={bone_name}, world=({bone.world_x:.2f}, {bone.world_y:.2f})")
+                print(f"[Attachment] name={attachment.name}, region_center=({px:.2f}, {py:.2f}), bone={bone_name}")
+                used_attachments.add(attachment.name)
+
+
+            # 缩放
             bone_scale_x = math.sqrt(bone.a ** 2 + bone.c ** 2)
             bone_scale_y = math.sqrt(bone.b ** 2 + bone.d ** 2)
             raw_scale_x = bone_scale_x * attachment.scaleX * scale
             raw_scale_y = bone_scale_y * attachment.scaleY * scale
-
-            # 处理翻转
             scale_x = abs(raw_scale_x)
             scale_y = abs(raw_scale_y)
 
-            # 仅根据全局设置是否翻转
-            flip_x = self.render_settings.flip_x
-            flip_y = self.render_settings.flip_y
-
-            # 缩放纹理
             if scale_x != 1 or scale_y != 1:
                 new_w = max(1, int(texture.get_width() * scale_x))
                 new_h = max(1, int(texture.get_height() * scale_y))
@@ -225,37 +272,26 @@ class Skeleton:
                 except ValueError:
                     continue
 
-            # 翻转纹理
-            if flip_x or flip_y:
-                texture = pygame.transform.flip(texture, flip_x, flip_y)
+            if self.render_settings.flip_x or self.render_settings.flip_y:
+                texture = pygame.transform.flip(texture, self.render_settings.flip_x, self.render_settings.flip_y)
 
-            # 计算旋转（适配Pygame的顺时针方向）
-            rotation = math.degrees(math.atan2(bone.c, bone.a))
-            rotation = -rotation
-            rotation += attachment.rotation
-
-            # 旋转纹理
+            # 旋转贴图（骨骼旋转 + 附件角度）
+            rotation = -math.degrees(math.atan2(bone.c, bone.a)) + attachment.rotation
             if rotation != 0:
                 texture = pygame.transform.rotate(texture, rotation)
 
-            # 颜色混合和透明度
+            # 混合透明度（忽略颜色）
+            tint_a = self.a * attachment.color.a
             if self.render_settings.use_premultiplied_alpha:
                 texture.set_alpha(int(tint_a * 255))
-                if tint_r != 1.0 or tint_g != 1.0 or tint_b != 1.0:
-                    color_surf = pygame.Surface(texture.get_size(), pygame.SRCALPHA)
-                    color = (int(tint_r * 255), int(tint_g * 255), int(tint_b * 255), 255)
-                    color_surf.fill(color)
-                    texture.blit(color_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
 
-            # 最终绘制（底部中心锚点）
-            min_x = min(vertices[i*2] for i in range(4))
-            min_y = min(vertices[i*2+1] for i in range(4))
-            draw_x = center_x + (min_x + offset_x) * scale
-            draw_y = center_y + (min_y + offset_y) * scale
-            surface.blit(texture, (draw_x, draw_y))
+            # 绘制到 Pygame surface
+            blit_x = px - texture.get_width() // 2
+            blit_y = py - texture.get_height() // 2
+            surface.blit(texture, (blit_x, blit_y))
 
-
-                    
+            # 骨骼调试红点
+            pygame.draw.circle(surface, (255, 0, 0), (int(px), int(py)), 3)
 
     
     def draw_debug(self, surface: pygame.Surface):
