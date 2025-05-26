@@ -8,8 +8,7 @@ from typing import Optional
 
 @dataclass
 class Bone:
-    """骨骼实例，所有坐标系相关的变换都在这里处理"""
-    data: 'BoneData'  # 需要定义在前面
+    data: 'BoneData' 
     parent: Optional['Bone'] = None
     
     # 本地变换属性
@@ -33,7 +32,6 @@ class Bone:
     world_y: float = 0
     
     def __post_init__(self):
-        """初始化完成后设置初始状态"""
         self.x = self.data.x
         self.y = self.data.y
         self.rotation = self.data.rotation
@@ -118,7 +116,7 @@ class Skeleton:
         self.skin = None
         self.render_settings = SpineRenderSettings()
         
-        # 初始化骨骼 - 确保父骨骼在前
+        # 确保父骨骼在前
         bone_map = {}
         for bone_data in data.bones:
             parent = None
@@ -127,15 +125,13 @@ class Skeleton:
             bone = Bone(bone_data, parent)
             bone_map[bone_data.name] = bone
             self.bones.append(bone)
-        
-        # 初始化插槽 - 按照原始顺序
+
         for slot_data in data.slots:
             bone = bone_map.get(slot_data.bone_data.name)
             if bone:
                 slot = Slot(slot_data, bone)
                 self.slots.append(slot)
                 
-        # 设置默认皮肤
         if data.default_skin:
             self.set_skin(data.default_skin)
             
@@ -168,15 +164,13 @@ class Skeleton:
 
 
     def reset_bones_from_names(self, bone_names: set[str]):
-        """根据骨骼名激活/停用骨骼，并确保父子关系完整"""
-        # 保留原有骨骼实例，避免重复创建
+
         bone_instance_map = {bone.data.name: bone for bone in self.bones}
         
-        # 标记所有骨骼为非激活
         for bone in self.bones:
             bone.active = False
         
-        # 激活当前动画使用的骨骼及其父骨骼
+        # 仅激活当前动画使用的骨骼及其父骨骼
         used_bones = set()
         def activate_bone(name):
             if name in used_bones or name not in bone_instance_map:
@@ -189,8 +183,7 @@ class Skeleton:
         
         for name in bone_names:
             activate_bone(name)
-        
-        # 按依赖顺序排序骨骼（父在前）
+
         self.bones = sorted(
             [bone for bone in self.bones if bone.active],
             key=lambda b: b.data.parent.name if b.data.parent else ""
@@ -212,7 +205,7 @@ class Skeleton:
         if not self.skin:
             return
 
-        used_attachments = set()  # 防止重复贴图
+        used_attachments = set()
 
         for bone in self.bones:
             bone_name = bone.data.name
@@ -221,7 +214,6 @@ class Skeleton:
             for (slot_index, attachment_name), attachment in self.skin.attachments.items():
                 if attachment.type != AttachmentType.Region:
                     continue
-                # 精确匹配
                 if attachment.name.startswith(bone_name) or attachment.path.startswith(bone_name):
 
                     if attachment.name in used_attachments:
@@ -240,7 +232,6 @@ class Skeleton:
 
             texture = region.texture.copy()
 
-            # 贴图位置：骨骼位置 + 附件偏移
             local_x = attachment.x
             local_y = attachment.y
             world_x = bone.world_x + local_x * bone.a + local_y * bone.b
@@ -249,7 +240,6 @@ class Skeleton:
             px = center_x + (world_x + offset_x) * scale
             py = center_y + (world_y + offset_y) * scale
 
-            # 输出调试信息
             if attachment.name not in used_attachments:
                 print(f"[Bone] name={bone_name}, world=({bone.world_x:.2f}, {bone.world_y:.2f})")
                 print(f"[Attachment] name={attachment.name}, region_center=({px:.2f}, {py:.2f}), bone={bone_name}")
@@ -275,12 +265,11 @@ class Skeleton:
             if self.render_settings.flip_x or self.render_settings.flip_y:
                 texture = pygame.transform.flip(texture, self.render_settings.flip_x, self.render_settings.flip_y)
 
-            # 旋转贴图（骨骼旋转 + 附件角度）
             rotation = -math.degrees(math.atan2(bone.c, bone.a)) + attachment.rotation
             if rotation != 0:
                 texture = pygame.transform.rotate(texture, rotation)
 
-            # 混合透明度（忽略颜色）
+            # 忽略颜色
             tint_a = self.a * attachment.color.a
             if self.render_settings.use_premultiplied_alpha:
                 texture.set_alpha(int(tint_a * 255))
@@ -290,25 +279,21 @@ class Skeleton:
             blit_y = py - texture.get_height() // 2
             surface.blit(texture, (blit_x, blit_y))
 
-            # 骨骼调试红点
             pygame.draw.circle(surface, (255, 0, 0), (int(px), int(py)), 3)
 
     
     def draw_debug(self, surface: pygame.Surface):
-        """绘制调试信息"""
+        
         center_x = surface.get_width() // 2
         center_y = surface.get_height() // 2
         scale = self.render_settings.scale
         
         for bone in self.bones:
-            # 计算世界坐标
             wx = center_x + (bone.world_x + self.render_settings.position_x) * scale
             wy = center_y + (bone.world_y + self.render_settings.position_y) * scale
             
-            # 绘制骨骼点
             pygame.draw.circle(surface, (255, 0, 0), (int(wx), int(wy)), 3)
             
-            # 绘制骨骼连接线
             if bone.parent:
                 parent_wx = center_x + (bone.parent.world_x + self.render_settings.position_x) * scale
                 parent_wy = center_y + (bone.parent.world_y + self.render_settings.position_y) * scale
