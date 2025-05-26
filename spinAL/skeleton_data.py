@@ -57,7 +57,6 @@ class Attachment:
 class RegionAttachment(Attachment):
 
     def compute_world_vertices(self, bone: 'Bone', vertices: list, screen_height: int):
-        """计算四个顶点在 Pygame 坐标系下的位置，支持 rotate"""
         x = bone.world_x
         y = bone.world_y
         a = bone.a
@@ -65,13 +64,10 @@ class RegionAttachment(Attachment):
         c = bone.c
         d = bone.d
 
-        # 区分 rotate:true 的纹理尺寸
         w = self.width
         h = self.height
         if self.region and self.region.rotate:
-            w, h = h, w  # 宽高互换
 
-        # 图像中心原点本地坐标
         local_vertices = [
             self.x - w / 2, self.y - h / 2,
             self.x + w / 2, self.y - h / 2,
@@ -101,7 +97,7 @@ class RegionAttachment(Attachment):
             vertices.append(wy)
 
     def __init__(self, name: str, **kwargs):
-        """初始化区域附件"""
+
         super().__init__(name=name, type=AttachmentType.Region)
         self.path = kwargs.get('path', "")
         self.x = kwargs.get('x', 0)
