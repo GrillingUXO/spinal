@@ -14,9 +14,9 @@ clock = pygame.time.Clock()
 font = pygame.font.SysFont("Arial", 16)
 edit_mode = True
 
-atlas = Atlas("/Users/michelleyan/Downloads/skel/xianghe.atlas")
+atlas = Atlas(".atlas")
 json_loader = SkeletonJson(atlas)
-skeleton_data = json_loader.read_skeleton_data("/Users/michelleyan/Downloads/skel/xianghe.json")
+skeleton_data = json_loader.read_skeleton_data(".json")
 skeleton = Skeleton(skeleton_data)
 
 print_all_animation_bones(json_loader)
