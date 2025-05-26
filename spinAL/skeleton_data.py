@@ -67,8 +67,9 @@ class RegionAttachment(Attachment):
         w = self.width
         h = self.height
         if self.region and self.region.rotate:
+            w, h = h, w 
 
-        local_vertices = [
+        local_vertices = [  
             self.x - w / 2, self.y - h / 2,
             self.x + w / 2, self.y - h / 2,
             self.x + w / 2, self.y + h / 2,
